@@ -44,6 +44,10 @@
   .chatrow { display: flex; }
   #chatInput { flex: 1; min-width: 0; font: inherit; padding: 10px; border-radius: 12px; border: 2px solid var(--ink); margin-right: 8px; }
   #send { margin: 0; padding: 10px 16px; }
+  #reasons { position: fixed; top: 0; left: 0; right: 0; bottom: 0; z-index: 9; background: rgba(27,42,74,.6); display: flex; align-items: center; justify-content: center; padding: 20px; }
+  #reasons .box { background: var(--white); border-radius: 20px; padding: 24px; max-width: 380px; width: 100%; }
+  #reasons h2 { margin-top: 0; font-size: 1.2rem; }
+  #reasons button { display: block; width: 100%; margin: 0 0 8px; }
   .hidden { display: none !important; }
 </style>
 </head>
@@ -60,6 +64,18 @@
     </ul>
     <label><input type="checkbox" id="age"> 18 yaşından büyüğüm ve kuralları kabul ediyorum.</label>
     <button class="primary" id="enter" disabled>Devam et</button>
+  </div>
+</div>
+
+<div id="reasons" class="hidden">
+  <div class="box">
+    <h2>Neden şikayet ediyorsun?</h2>
+    <button data-r="nudity">Müstehcen görüntü</button>
+    <button data-r="harass">Taciz veya küfür</button>
+    <button data-r="minor">Reşit olmadığı düşünülen biri</button>
+    <button data-r="spam">Spam veya reklam</button>
+    <button data-r="other">Diğer</button>
+    <button id="cancelReport">Vazgeç</button>
   </div>
 </div>
 
@@ -127,6 +143,7 @@
     $('remote').srcObject = null;
     $('report').disabled = true;
     $('chat').classList.add('hidden');
+    $('reasons').classList.add('hidden');
     $('msgs').innerHTML = '';
   }
 
@@ -150,7 +167,15 @@
   $('cam').onclick = () => toggleMedia('cam');
   $('next').onclick = () => { teardown(); setStatus('Yeni biri aranıyor...'); socket.emit('join'); };
   $('stop').onclick = () => { teardown(); socket.emit('leave'); inCall = false; setButtons(false); setStatus('Durdurdun. Tekrar başlamak için "Başla" düğmesine bas.'); };
-  $('report').onclick = () => { socket.emit('report'); teardown(); setStatus('Şikayet gönderildi. Yeni biri aranıyor...'); socket.emit('join'); };
+  $('report').onclick = () => $('reasons').classList.remove('hidden');
+  $('cancelReport').onclick = () => $('reasons').classList.add('hidden');
+  document.querySelectorAll('#reasons [data-r]').forEach((b) => {
+    b.onclick = () => {
+      $('reasons').classList.add('hidden');
+      socket.emit('report', b.dataset.r);
+      teardown(); setStatus('Şikayet gönderildi. Yeni biri aranıyor...'); socket.emit('join');
+    };
+  });
 
   function addMsg(t, me) {
     const d = document.createElement('div');
