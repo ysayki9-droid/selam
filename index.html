@@ -1,0 +1,182 @@
+<!DOCTYPE html>
+<html lang="tr">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Selam</title>
+<style>
+  :root { --ink:#1B2A4A; --sky:#D6ECF8; --sun:#FFC857; --stage:#2B3F6B; --white:#fff; }
+  * { box-sizing: border-box; }
+  html, body { height: 100%; margin: 0; }
+  body { font-family: "Avenir Next", "Segoe UI", Roboto, sans-serif; background: var(--sky); color: var(--ink);
+         padding: 16px; }
+  header, .stage { margin-bottom: 12px; }
+  header { display: flex; align-items: baseline; justify-content: space-between; }
+  h1 { margin: 0; font-size: 1.6rem; letter-spacing: -0.02em; }
+  #status { font-size: 1rem; }
+  .stage { position: relative; height: calc(100vh - 190px); min-height: 260px; background: var(--stage); border-radius: 20px; overflow: hidden; }
+  #remote { width: 100%; height: 100%; object-fit: cover; background: var(--stage); }
+  #local { position: absolute; right: 14px; bottom: 14px; width: 200px; height: 150px; object-fit: cover;
+           border-radius: 12px; border: 3px solid var(--sky); transform: scaleX(-1); background: #000; }
+  .controls { position: relative; z-index: 2; display: flex; flex-wrap: wrap; }
+  button { margin: 0 10px 10px 0; font: inherit; font-weight: 600; padding: 14px 22px; border-radius: 12px; border: 2px solid var(--ink);
+           background: var(--white); color: var(--ink); cursor: pointer; }
+  button.primary { background: var(--sun); }
+  button:disabled { opacity: .4; cursor: not-allowed; }
+  button:focus-visible, input:focus-visible { outline: 3px solid var(--ink); outline-offset: 2px; }
+  #gate { position: fixed; top: 0; left: 0; right: 0; bottom: 0; z-index: 10; background: var(--sky); display: flex; align-items: center; justify-content: center; padding: 20px; }
+  #gate .box { max-width: 460px; background: var(--white); border-radius: 20px; padding: 28px; }
+  #gate h2 { margin-top: 0; }
+  #gate label { display: flex; gap: 10px; align-items: flex-start; margin: 14px 0 20px; }
+  #gate ul { padding-left: 18px; line-height: 1.5; }
+  #chat { position: absolute; left: 14px; bottom: 14px; width: 320px; max-width: 55%; z-index: 3; }
+  #msgs { max-height: 160px; overflow-y: auto; margin-bottom: 8px; }
+  .msg { display: table; max-width: 100%; word-wrap: break-word; margin: 3px 0; padding: 6px 12px; border-radius: 12px; background: var(--white); }
+  .msg.me { background: var(--sun); margin-left: auto; }
+  .chatrow { display: flex; }
+  #chatInput { flex: 1; min-width: 0; font: inherit; padding: 10px; border-radius: 12px; border: 2px solid var(--ink); margin-right: 8px; }
+  #send { margin: 0; padding: 10px 16px; }
+  .hidden { display: none !important; }
+</style>
+</head>
+<body>
+
+<div id="gate">
+  <div class="box">
+    <h2>Başlamadan önce</h2>
+    <ul>
+      <li>Kamera ve mikrofon izni vermen gerekiyor.</li>
+      <li>Karşındaki kişi rastgele seçilir; kişisel bilgilerini paylaşma.</li>
+      <li>Rahatsız edici birini "Şikayet et" ile bildirebilirsin.</li>
+      <li>Uygunsuz davranış, hesabın engellenmesine yol açar.</li>
+    </ul>
+    <label><input type="checkbox" id="age"> 18 yaşından büyüğüm ve kuralları kabul ediyorum.</label>
+    <button class="primary" id="enter" disabled>Devam et</button>
+  </div>
+</div>
+
+<header>
+  <h1>Selam</h1>
+  <span id="status" role="status">Başlamak için "Başla" düğmesine bas.</span>
+</header>
+
+<div class="stage">
+  <video id="remote" autoplay playsinline></video>
+  <video id="local" autoplay playsinline muted></video>
+  <div id="chat" class="hidden">
+    <div id="msgs" aria-live="polite"></div>
+    <div class="chatrow">
+      <input id="chatInput" maxlength="500" placeholder="Mesaj yaz" autocomplete="off">
+      <button id="send">Gönder</button>
+    </div>
+  </div>
+</div>
+
+<div class="controls">
+  <button class="primary" id="start">Başla</button>
+  <button id="next" disabled>Sonraki</button>
+  <button id="report" disabled>Şikayet et</button>
+  <button id="stop" disabled>Durdur</button>
+</div>
+
+<script src="/socket.io/socket.io.js"></script>
+<script>
+  // STUN/TURN ayarları sunucudan (/ice) alınır
+  let ICE = [{ urls: 'stun:stun.l.google.com:19302' }];
+  fetch('/ice').then((r) => r.json()).then((x) => { ICE = x; }).catch(() => {});
+
+  const $ = (id) => document.getElementById(id);
+  const socket = io();
+  let pc = null, localStream = null, inCall = false;
+
+  const setStatus = (t) => ($('status').textContent = t);
+  const setButtons = (on) => { $('next').disabled = $('stop').disabled = !on; $('start').disabled = on; };
+
+  $('age').onchange = (e) => ($('enter').disabled = !e.target.checked);
+  $('enter').onclick = () => $('gate').classList.add('hidden');
+
+  async function getMedia() {
+    if (localStream) return;
+    localStream = await navigator.mediaDevices.getUserMedia({ video: true, audio: true });
+    $('local').srcObject = localStream;
+  }
+
+  function createPC() {
+    pc = new RTCPeerConnection({ iceServers: ICE });
+    localStream.getTracks().forEach((t) => pc.addTrack(t, localStream));
+    pc.ontrack = (e) => ($('remote').srcObject = e.streams[0]);
+    pc.onicecandidate = (e) => e.candidate && socket.emit('signal', { candidate: e.candidate });
+    pc.onconnectionstatechange = () => {
+      if (pc && pc.connectionState === 'connected') { setStatus('Bağlandın. Merhaba de!'); $('report').disabled = false; }
+      if (pc && pc.connectionState === 'failed') setStatus('Bağlantı kurulamadı. "Sonraki" ile yeniden dene.');
+    };
+  }
+
+  function teardown() {
+    if (pc) { pc.close(); pc = null; }
+    $('remote').srcObject = null;
+    $('report').disabled = true;
+    $('chat').classList.add('hidden');
+    $('msgs').innerHTML = '';
+  }
+
+  $('start').onclick = async () => {
+    try { await getMedia(); }
+    catch { return setStatus('Kamera veya mikrofon izni verilmedi. Tarayıcı ayarlarından izin ver.'); }
+    inCall = true; setButtons(true); setStatus('Biri aranıyor...');
+    socket.emit('join');
+  };
+  $('next').onclick = () => { teardown(); setStatus('Yeni biri aranıyor...'); socket.emit('join'); };
+  $('stop').onclick = () => { teardown(); socket.emit('leave'); inCall = false; setButtons(false); setStatus('Durdurdun. Tekrar başlamak için "Başla" düğmesine bas.'); };
+  $('report').onclick = () => { socket.emit('report'); teardown(); setStatus('Şikayet gönderildi. Yeni biri aranıyor...'); socket.emit('join'); };
+
+  function addMsg(t, me) {
+    const d = document.createElement('div');
+    d.className = 'msg ' + (me ? 'me' : 'them');
+    d.textContent = t;                       // textContent: HTML enjekte edilemez
+    $('msgs').appendChild(d);
+    $('msgs').scrollTop = $('msgs').scrollHeight;
+  }
+  function sendChat() {
+    const v = $('chatInput').value.trim();
+    if (!v || !pc) return;
+    socket.emit('chat', v); addMsg(v, true); $('chatInput').value = '';
+  }
+  $('send').onclick = sendChat;
+  $('chatInput').onkeydown = (e) => { if (e.key === 'Enter') sendChat(); };
+  socket.on('chat', (t) => addMsg(t, false));
+
+  socket.on('waiting', () => setStatus('Biri aranıyor...'));
+  socket.on('matched', async ({ initiator }) => {
+    teardown(); createPC(); setStatus('Bağlanılıyor...');
+    $('chat').classList.remove('hidden');
+    if (initiator) {
+      await pc.setLocalDescription(await pc.createOffer());
+      socket.emit('signal', { description: pc.localDescription });
+    }
+  });
+  socket.on('signal', async ({ description, candidate }) => {
+    if (!pc) return;
+    try {
+      if (description) {
+        await pc.setRemoteDescription(description);
+        if (description.type === 'offer') {
+          await pc.setLocalDescription(await pc.createAnswer());
+          socket.emit('signal', { description: pc.localDescription });
+        }
+      } else if (candidate) {
+        await pc.addIceCandidate(candidate);
+      }
+    } catch (err) { console.error(err); }
+  });
+  socket.on('partner-left', () => {
+    teardown();
+    if (inCall) { setStatus('Karşındaki ayrıldı. Yeni biri aranıyor...'); socket.emit('join'); }
+  });
+  socket.on('blocked', () => {
+    teardown(); inCall = false; setButtons(false); $('start').disabled = true;
+    setStatus('Şikayetler nedeniyle geçici olarak engellendin.');
+  });
+</script>
+</body>
+</html>
